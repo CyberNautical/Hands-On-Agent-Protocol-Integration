@@ -1,0 +1,55 @@
+[project]
+name = "hands-on-agent-protocols"
+version = "0.1.0"
+description = "Hands-on workshop: MCP via FastMCP and A2A via Google ADK"
+requires-python = ">=3.10,<3.13"
+
+# ---------------------------------------------------------------------------
+# Everything the workshop needs lives in ONE environment.
+#
+# That is worth a sentence, because it is not guaranteed. FastMCP and Google
+# ADK both depend on the low-level `mcp` package, and they must agree on it:
+#
+#   fastmcp 3.4.7   -> mcp <2.0, >=1.24.0
+#   google-adk 2.6.3 -> mcp <2,   >=1.24
+#
+# Identical ranges, so one `uv sync` resolves cleanly.
+#
+# (For the curious: FastMCP 4.x moves to mcp>=2.0, which does NOT overlap with
+# google-adk's ceiling. Mixing those would force two separate virtualenvs. We
+# stay on the stable 3.x line so this workshop stays a single install.)
+# ---------------------------------------------------------------------------
+dependencies = [
+    # --- MCP: the server side of the workshop ------------------------------
+    "fastmcp==3.4.7",
+
+    # --- A2A + agents: the Google ADK side ---------------------------------
+    #   [a2a]        Agent2Agent server/client stack (brings in a2a-sdk)
+    #   [mcp]        McpToolset, so an ADK agent can consume an MCP server
+    #   [extensions] LiteLLM, our bridge to Azure OpenAI
+    "google-adk[a2a,mcp,extensions]==2.6.3",
+
+    # --- Workshop tooling ---------------------------------------------------
+    # Used in the notebooks to hit the servers with raw HTTP, so learners see
+    # the actual wire format instead of only an SDK abstraction.
+    "httpx>=0.28,<1.0",
+
+    # Lets VS Code / Jupyter run the two inspector notebooks in this env.
+    "ipykernel>=6.29",
+
+    # Loads .env so the Azure credentials are picked up automatically.
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = ["ruff>=0.9"]
+
+# ---------------------------------------------------------------------------
+# We are not building/installing this project as a package -- it is a workshop
+# repo that is run in place. Telling uv this avoids a pointless build step.
+# ---------------------------------------------------------------------------
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
