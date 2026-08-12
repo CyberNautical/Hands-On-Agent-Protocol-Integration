@@ -1,0 +1,22 @@
+{
+  "name": "billing_agent",
+  "description": "Billing specialist for the IT support desk. Handles invoice questions, duplicate or unexpected charges, refunds, and plan changes.",
+  "version": "1.0.0",
+  "protocolVersion": "0.3.0",
+  "url": "http://localhost:8001/a2a/billing_agent",
+  "preferredTransport": "JSONRPC",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false
+  },
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
+  "skills": [
+    {
+      "id": "billing_enquiry",
+      "name": "Billing Enquiry",
+      "description": "Investigate invoice questions, duplicate charges, refunds and credits, and explain the resolution path.",
+      "tags": ["billing", "invoice", "refund", "charge", "finance"]
+    }
+  ]
+}

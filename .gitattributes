@@ -1,0 +1,13 @@
+# Shell scripts must use LF endings. This repo is authored on any OS but runs
+# in a Linux Codespace, and a CRLF shebang line fails with the classic
+# "bad interpreter: /usr/bin/env bash^M".
+*.sh text eol=lf
+
+# Same reasoning for anything else executed rather than just read.
+*.py text eol=lf
+
+# Keep notebooks and JSON stable across platforms.
+*.ipynb text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
