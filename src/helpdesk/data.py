@@ -49,6 +49,51 @@ TICKETS: dict[str, dict] = {
         "requester": "kai@example.com",
         "notes": "Granted read-only role on 2024-09-02.",
     },
+    "TICK-1004": {
+        "id": "TICK-1004",
+        "subject": "Annual plan renewed at the wrong tier",
+        "status": "open",
+        "priority": "high",
+        "category": "billing",
+        "requester": "rowan@example.com",
+        "notes": "Downgraded to Team in August, renewed on Enterprise pricing.",
+    },
+    "TICK-1005": {
+        "id": "TICK-1005",
+        "subject": "Locked out after too many sign-in attempts",
+        "status": "open",
+        "priority": "high",
+        "category": "access",
+        "requester": "priya@example.com",
+        "notes": "Self-service reset blocked by the lockout. Identity not yet verified.",
+    },
+    "TICK-1006": {
+        "id": "TICK-1006",
+        "subject": "Docking station no longer charges the laptop",
+        "status": "open",
+        "priority": "medium",
+        "category": "hardware",
+        "requester": "milo@example.com",
+        "notes": "Displays still work over the dock, power delivery does not.",
+    },
+    "TICK-1007": {
+        "id": "TICK-1007",
+        "subject": "Email client crashes when opening calendar invites",
+        "status": "open",
+        "priority": "low",
+        "category": "software",
+        "requester": "avery@example.com",
+        "notes": "Only for invites with attachments. Reproducible on 2 machines.",
+    },
+    "TICK-1008": {
+        "id": "TICK-1008",
+        "subject": "Refund never arrived for a cancelled seat",
+        "status": "resolved",
+        "priority": "medium",
+        "category": "billing",
+        "requester": "jules@example.com",
+        "notes": "Credit applied to the October invoice instead of a card refund.",
+    },
 }
 
 
@@ -153,6 +198,7 @@ def create_ticket(subject: str, category: str, priority: str = "medium") -> dict
     persist until the server restarts. That is deliberate: it makes a tool call
     feel like it genuinely did something.
     """
+    # Relies on the seed ids above being contiguous from TICK-1001.
     new_id = f"TICK-{1000 + len(TICKETS) + 1}"
     ticket = {
         "id": new_id,

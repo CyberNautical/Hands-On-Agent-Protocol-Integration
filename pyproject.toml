@@ -44,6 +44,10 @@ dependencies = [
 [dependency-groups]
 dev = ["ruff>=0.9"]
 
+# Optional: keyless auth to Azure OpenAI via Entra ID / managed identity.
+# Not installed by default -- `uv sync --group entra` when you want it.
+entra = ["azure-identity>=1.19"]
+
 # ---------------------------------------------------------------------------
 # We are not building/installing this project as a package -- it is a workshop
 # repo that is run in place. Telling uv this avoids a pointless build step.

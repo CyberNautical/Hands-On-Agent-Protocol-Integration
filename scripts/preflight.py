@@ -78,17 +78,43 @@ def check_azure() -> None:
     except ImportError:
         pass
 
-    required = [
-        "AZURE_API_KEY",
-        "AZURE_API_BASE",
-        "AZURE_API_VERSION",
-        "AZURE_OPENAI_DEPLOYMENT",
-    ]
+    # Two supported auth modes: an API key, or keyless via Entra ID /
+    # managed identity. helpdesk.azure_llm decides which one is in play.
+    try:
+        from helpdesk.azure_llm import AzureConfigError, auth_mode, token_provider
+
+        mode = auth_mode()
+    except Exception as exc:  # noqa: BLE001
+        check("auth mode", False, f"{type(exc).__name__}: {exc}")
+        return
+    check("auth mode", True, mode)
+
+    required = ["AZURE_API_BASE", "AZURE_API_VERSION", "AZURE_OPENAI_DEPLOYMENT"]
+    if mode == "key":
+        required.append("AZURE_API_KEY")
     missing = [v for v in required if not os.getenv(v)]
     check("env vars set", not missing, ", ".join(missing) if missing else "")
     if missing:
         print("        copy .env.example to .env and fill it in")
         return
+
+    extra: dict = {"api_version": os.environ["AZURE_API_VERSION"]}
+    if mode == "entra":
+        # Fetching a token is the step that fails when azure-identity is not
+        # installed, nothing is signed in, or the role assignment is missing.
+        try:
+            provider = token_provider()
+            provider()
+            extra["azure_ad_token_provider"] = provider
+            check("entra token", True)
+        except AzureConfigError as exc:
+            check("entra token", False, str(exc).splitlines()[0])
+            return
+        except Exception as exc:  # noqa: BLE001
+            check("entra token", False, f"{type(exc).__name__}: {exc}")
+            print("        run `az login`, or grant the identity")
+            print("        'Cognitive Services OpenAI User' on the resource")
+            return
 
     # Env vars being present proves nothing. Make a real call.
     try:
@@ -98,6 +124,7 @@ def check_azure() -> None:
             model=f"azure/{os.environ['AZURE_OPENAI_DEPLOYMENT']}",
             messages=[{"role": "user", "content": "reply with the word ok"}],
             max_tokens=5,
+            **extra,
         )
         check("live completion", True)
     except Exception as exc:  # noqa: BLE001 -- we want to report anything

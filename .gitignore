@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Google ADK per-agent session/artifact storage, created on first run
+.adk/
+
+# uv lockfile
+uv.lock

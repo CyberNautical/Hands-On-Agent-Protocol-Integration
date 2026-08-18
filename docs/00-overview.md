@@ -81,6 +81,11 @@ cp .env.example .env   # then fill in your Azure OpenAI values
 uv run python scripts/preflight.py
 ```
 
+Prefer not to put a key in a file? Leave `AZURE_API_KEY` blank and authenticate
+with Entra ID / managed identity instead — `uv sync --group entra`, then
+`az login` (or assign a managed identity). Details are at the bottom of
+`.env.example`.
+
 `preflight.py` checks versions, makes a real Azure call, and confirms the ports
 are free. Run it before presenting. It fails loudly so the demo doesn't.
 

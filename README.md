@@ -34,9 +34,13 @@ Open in Codespaces. Dependencies install during creation, so there is nothing
 to install when you get a terminal.
 
 ```bash
-cp .env.example .env          # fill in your 4 Azure OpenAI values
+cp .env.example .env          # fill in your Azure OpenAI values
 uv run python scripts/preflight.py
 ```
+
+Keys are the quick path. For keyless auth with Entra ID / managed identity,
+leave `AZURE_API_KEY` blank, run `uv sync --group entra`, and sign in with
+`az login` (or assign a managed identity to the compute).
 
 `preflight.py` checks versions, makes a real Azure call, tests the ports, and
 validates the agent card. If it passes, the demo will run.
@@ -114,7 +118,8 @@ FastMCP 4.x would not — see [04 — Stateless MCP](docs/04-stateless-mcp.md) f
 why that trade was made deliberately.
 
 Requires Python 3.10–3.12 and an Azure OpenAI deployment with a tool-calling
-API version (`2024-10-21` or newer).
+API version (`v1` for AI Foundry endpoints, `2024-10-21` or newer for classic
+ones).
 
 ---
 
