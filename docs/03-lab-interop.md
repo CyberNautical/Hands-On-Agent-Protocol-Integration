@@ -1,13 +1,21 @@
-# 03 — Interop (bonus)
+# 03 — Both together
 
-**Time: ≤ 5 minutes.** Optional, but it's where the two halves click together.
+> ### ⭐ Optional bonus hands-on lab
+>
+> Labs 1 and 2 are the core workshop. This one is a bonus: skip it if you are
+> short on time, and come back when you want to see the two protocols working
+> in the same process.
 
-**Goal:** build one agent that **consumes MCP** and **is published over A2A**,
-and see that they are different layers rather than competing choices.
+**Time: 5 minutes**
+
+**Goal:** build one agent that **uses MCP** to get its tools and **speaks A2A**
+so other agents can call it.
+
+This is where the two halves click together.
 
 ---
 
-## Step 1 — Start both (60s)
+## Step 1 — Start both servers (60s)
 
 Terminal 1:
 
@@ -21,15 +29,15 @@ Terminal 2:
 ./scripts/run_interop.sh
 ```
 
-**You should see** the interop agent start on `:8003`.
+You should see the agent start on port `8003`.
 
-If it fails at startup complaining it can't connect, the MCP server isn't up.
-The interop agent fetches its tool list from MCP the moment it boots — it has
-no tools of its own.
+> If it fails on startup saying it cannot connect, the MCP server is not
+> running. This agent has **no tools of its own** — it fetches its entire tool
+> list from MCP the moment it boots.
 
 ---
 
-## Step 2 — See the shape (60s)
+## Step 2 — Look at its card (60s)
 
 Terminal 3:
 
@@ -37,26 +45,25 @@ Terminal 3:
 curl -s http://localhost:8003/.well-known/agent-card.json | python -m json.tool
 ```
 
-**You should see** an agent card for `support_agent`.
+You should see an agent card for `support_agent`.
 
-So this one process is simultaneously:
+So this one process is, at the same time:
 
-- an **MCP client** — it went and got its tools from `:8000`
-- an **A2A server** — it publishes a card and accepts delegated work
+- an **MCP client** — it fetched its tools from port 8000
+- an **A2A server** — it publishes a card and accepts work
 
 ```mermaid
 graph LR
-    Caller[Any A2A caller] -->|"A2A :8003"| S[support_agent]
-    S -->|"MCP :8000"| M[helpdesk MCP server]
-    M --> D[(tickets, KB)]
+    Caller[Any A2A caller] -->|"A2A on 8003"| S[support_agent]
+    S -->|"MCP on 8000"| M[MCP server]
+    M --> D[(tickets, knowledge base)]
 ```
 
-Read that diagram left to right: A2A is how work arrives, MCP is how work gets
-done. Horizontal in, vertical down.
+Read it left to right: **A2A is how work arrives. MCP is how work gets done.**
 
 ---
 
-## Step 3 — Drive it (90s)
+## Step 3 — Send it a question (90s)
 
 ```bash
 curl -s -X POST http://localhost:8003/ \
@@ -75,23 +82,23 @@ curl -s -X POST http://localhost:8003/ \
   }' | python -m json.tool
 ```
 
-**You should see** an answer that came from the knowledge base.
+You should see an answer drawn from the knowledge base.
 
-Trace what happened:
+What happened, in order:
 
 1. The request arrived over **A2A**.
 2. The agent decided to search the knowledge base.
-3. That search went out over **MCP** to a different process.
+3. That search went out over **MCP**, to a different process.
 4. The result came back and became the answer.
 
-Both protocols, one request, and the agent code contains neither an HTTP client
-nor a tool list.
+Two protocols, one request — and the agent's own code contains neither an HTTP
+client nor a list of tools.
 
 ---
 
 ## Step 4 — Read the source (60s)
 
-`src/helpdesk/interop/support_agent/agent.py` is short. The interesting part:
+`src/helpdesk/interop/support_agent/agent.py`:
 
 ```python
 helpdesk_tools = McpToolset(
@@ -102,11 +109,12 @@ helpdesk_tools = McpToolset(
 root_agent = LlmAgent(name="support_agent", ..., tools=[helpdesk_tools])
 ```
 
-Note what's absent: the agent never names a tool signature, never builds a
-schema, never writes an HTTP call. It learns all of it at startup by asking.
+Notice what is missing: the agent never writes a tool signature, never builds a
+schema, never makes an HTTP call. It learns all of that at startup by asking.
 
-**Add a tool to the MCP server, restart, and this agent can use it — with no
-change to this file.** That is the M+N property from the overview, running.
+> **Add a new tool to the MCP server, restart, and this agent can use it — with
+> no change to this file.** That is the whole point of a protocol, running in
+> front of you.
 
 And `serve.py`:
 
@@ -114,20 +122,24 @@ And `serve.py`:
 app = to_a2a(root_agent, host="localhost", port=PORT)
 ```
 
-One line publishes it as an A2A peer. (`to_a2a` is marked experimental in ADK —
-fine here, check its status before a customer depends on it. Section 2's
-`agent.json` route is the stable one and gives you exact control over the card.)
+One line publishes it for other agents to call.
+
+> `to_a2a` is marked experimental in ADK. That is fine for learning, but check
+> its status before a customer depends on it. Lab 2's `agent.json` approach is
+> the stable one, and gives you exact control over the card.
 
 ---
 
 ## The takeaway
 
-Ask the question this way and it stops being confusing:
+Ask the question this way and the confusion disappears:
 
 > **"Is the thing on the other side a function, or a colleague?"**
 
-A function → MCP. A colleague → A2A. An agent that has both is an agent that
-can do work *and* be given work, which is what production systems look like.
+A function → **MCP**. A colleague → **A2A**.
+
+An agent with both can do work *and* be given work. That is what production
+systems look like.
 
 ---
 
@@ -135,11 +147,11 @@ can do work *and* be given work, which is what production systems look like.
 
 You can now answer:
 
-- Are MCP and A2A alternatives? → no, they're different layers.
-- How does an agent get tools from an MCP server? → `McpToolset`.
-- How do you publish an ADK agent over A2A? → `to_a2a()`, or `agent.json` plus
-  `adk api_server --a2a`.
-- What does the agent code know about its tools? → nothing until runtime.
+- **Are MCP and A2A alternatives?** No — different layers, usually used together.
+- **How does an agent get tools from an MCP server?** `McpToolset`.
+- **How do you publish an agent over A2A?** `to_a2a()`, or an `agent.json` file
+  plus `adk api_server --a2a`.
+- **What does the agent code know about its tools?** Nothing, until runtime.
 
 **Next:** [04 — Stateless MCP](04-stateless-mcp.md), then
 [05 — Going further](05-going-further.md).
