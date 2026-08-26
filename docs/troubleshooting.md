@@ -1,59 +1,102 @@
 # Troubleshooting
 
-Start here:
+Find your symptom. Apply the fix.
+
+**Before anything else:**
 
 ```bash
 uv run python scripts/preflight.py
 ```
 
-It checks versions, makes a real Azure call, tests the ports, and validates
-`agent.json`. Most problems below are things it catches.
+It checks the five things that usually break, and tells you which one it is.
 
 ---
 
-## Azure / model
+## Setup
 
-### `AzureConfigError: missing ... AZURE_API_KEY`
+### `uv: command not found`
 
-No `.env`, or it's incomplete.
+The Codespace installs `uv` during build. If it is missing, the build did not
+finish — rebuild the Codespace (**Command Palette → Codespaces: Rebuild
+Container**), or install it:
 
 ```bash
-cp .env.example .env
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Then fill in all four values.
+### `ModuleNotFoundError: No module named 'fastmcp'`
 
-### 404 from Azure
+Dependencies are not installed, or you ran Python outside the project
+environment.
 
-Two common causes.
-
-**Deployment name vs model name.** `AZURE_OPENAI_DEPLOYMENT` must be the name
-*you* gave the deployment in the Azure portal, which is often not the model
-name. If you deployed `gpt-4o` and named the deployment `gpt-4o-prod`, the
-value is `gpt-4o-prod`.
-
-**Wrong API surface.** AI Foundry resources (`*.services.ai.azure.com`) serve
-`/openai/v1/` and return `Resource not found` for the older
-`/openai/deployments/...` route — no matter how recent the dated API version
-is. Set:
-
-```dotenv
-AZURE_API_VERSION=v1
+```bash
+uv sync
 ```
 
-Classic `*.openai.azure.com` resources keep using a dated version such as
-`2024-10-21`. Note that only `v1`, `latest` and `preview` select the new route;
-of those, `v1` is the one that works with LiteLLM 1.97.
+Then always start commands with `uv run`, or use the provided scripts.
 
-Also check `AZURE_API_BASE` — scheme included, no trailing path:
-`https://my-resource.openai.azure.com`
+### `Permission denied: ./scripts/run_mcp_server.sh`
 
-### Preflight fails but the same call works standalone
+```bash
+chmod +x scripts/*.sh
+```
 
-Something already exported `AZURE_*` into your shell. `.env` is loaded with
-`override=False`, so real environment variables win — a stale
-`AZURE_API_VERSION` from an earlier `source .env` will quietly beat the value
-you just edited.
+### `bad interpreter: /usr/bin/env bash^M`
+
+The file has Windows line endings. `.gitattributes` should prevent this, but if
+it happens:
+
+```bash
+sed -i 's/\r$//' scripts/*.sh
+```
+
+---
+
+## Azure
+
+Every one of these comes from `.env`. Open it — the comments explain each
+value. `preflight.py` prints which auth mode it resolved, so start there.
+
+| Error | Cause | Fix |
+|---|---|---|
+| `404 Not Found` | wrong deployment name, or wrong API version | see below |
+| `401` / `403` | wrong key, or missing role for keyless | see below |
+| `429 Too Many Requests` | quota exhausted | wait, or raise quota in the portal |
+| `Connection refused` on Azure | wrong endpoint URL | `AZURE_API_BASE` needs the scheme and **no trailing path** |
+| model ignores tools | API version too old | use `v1`, or `2024-10-21` or newer |
+
+### The 404 — two causes
+
+This is the most common failure in the entire workshop.
+
+**1. Deployment name vs model name.** `AZURE_OPENAI_DEPLOYMENT` is the name
+**you chose** when creating the deployment, not the model name. Deploy `gpt-4o`
+and call it `gpt-4o-prod`, and the correct value is `gpt-4o-prod`. Check it in
+the Azure portal under **Deployments**.
+
+**2. Wrong API surface.** The two kinds of Azure resource use different routes,
+and a recent date does not help:
+
+| Your endpoint looks like | Set `AZURE_API_VERSION` to |
+|---|---|
+| `*.services.ai.azure.com` (AI Foundry) | `v1` |
+| `*.openai.azure.com` (classic) | `2024-10-21` or newer |
+
+If a dated version gives `Resource not found`, try `v1`.
+
+Also check `AZURE_API_BASE` has the scheme and no trailing path. If the portal
+showed you `.../openai/v1/responses`, drop everything from `/openai` onward:
+
+```
+correct    https://my-resource.openai.azure.com
+wrong      https://my-resource.openai.azure.com/openai/v1/responses
+```
+
+### Preflight fails, but the same call works elsewhere
+
+Something already exported `AZURE_*` into your shell. `.env` does not override
+real environment variables, so a stale value quietly wins over the one you just
+edited.
 
 ```bash
 env | grep AZURE_    # should be empty
@@ -61,48 +104,22 @@ env | grep AZURE_    # should be empty
 
 Open a fresh terminal, or unset them.
 
-### 401 from Azure
-
-Wrong key, or the key belongs to a different resource than `AZURE_API_BASE`.
-
-### The model ignores the tools entirely
-
-`AZURE_API_VERSION` too old to support tool calling. Use `2024-10-21` or newer.
-The failure mode is silent — the model just answers from memory.
-
 ---
 
-## Keyless auth (Entra ID / managed identity)
+## Keyless auth (optional)
 
-Set `AZURE_AUTH_MODE=entra` (or just leave `AZURE_API_KEY` blank) to
-authenticate as an Azure identity instead of with a shared key. Preflight
-prints the mode it resolved, so start there.
+Only relevant if you left `AZURE_API_KEY` blank, or set
+`AZURE_AUTH_MODE=entra`.
 
-### `AzureConfigError: Keyless auth needs the azure-identity package`
+| Error | Fix |
+|---|---|
+| `Keyless auth needs the azure-identity package` | `uv sync --group entra` |
+| `CredentialUnavailableError`, or failed to get a token | Nothing is signed in — run `az login`, or assign a managed identity |
+| `401` / `403` with a valid token | Missing role — see below |
+| It used a key when you wanted keyless | `AZURE_AUTH_MODE` defaults to `auto`, which prefers a key whenever one is set. Set it to `entra` explicitly |
 
-The dependency is optional:
-
-```bash
-uv sync --group entra
-```
-
-### `CredentialUnavailableError` / `DefaultAzureCredential failed to retrieve a token`
-
-Nothing is signed in. Locally:
-
-```bash
-az login
-```
-
-On Azure compute, confirm a managed identity is actually assigned to the
-resource. For a **user-assigned** identity you must also set `AZURE_CLIENT_ID`
-to that identity's client ID — otherwise the credential does not know which one
-to use.
-
-### 401 or 403 with keyless auth
-
-The token is fine, the permissions are not. Grant the identity the
-**Cognitive Services OpenAI User** role on the Azure OpenAI resource:
+The identity needs the **Cognitive Services OpenAI User** role on the Azure
+OpenAI resource:
 
 ```bash
 az role assignment create \
@@ -111,140 +128,128 @@ az role assignment create \
   --scope <resource-id-of-the-azure-openai-resource>
 ```
 
-Role assignments can take a few minutes to propagate.
+Role assignments take a few minutes to take effect.
 
-### It used a key when you expected keyless (or vice versa)
-
-`AZURE_AUTH_MODE` defaults to `auto`, which prefers the key whenever
-`AZURE_API_KEY` is set — including a stale value left in your shell. Set the
-mode explicitly (`key` or `entra`) to remove the ambiguity.
+For a **user-assigned** managed identity you must also set `AZURE_CLIENT_ID` to
+that identity's client ID — otherwise Azure does not know which one to use.
 
 ---
 
-## MCP
+## Lab 1 — MCP
 
-### `Connection refused` on :8000
+### `404` when connecting to the MCP server
 
-The server isn't running. `./scripts/run_mcp_server.sh` in another terminal.
+The URL must end in `/mcp/`:
 
-### 404 at the MCP endpoint
+```
+correct    http://127.0.0.1:8000/mcp/
+wrong      http://127.0.0.1:8000
+```
 
-Missing path. FastMCP's HTTP transport mounts at `/mcp/`, so the URL is
-`http://127.0.0.1:8000/mcp/` — not `http://127.0.0.1:8000/`.
+### `Connection refused` on port 8000
 
-### `ModuleNotFoundError: No module named 'helpdesk'`
-
-`PYTHONPATH` isn't set. The run scripts export it; if you're running Python
-directly:
+The server is not running. In another terminal:
 
 ```bash
-export PYTHONPATH="$PWD/src"
+./scripts/run_mcp_server.sh
 ```
-
-In notebooks, the devcontainer sets it. Outside the devcontainer:
-
-```python
-import sys; sys.path.insert(0, "src")
-```
-
-### Interop agent fails at startup
-
-It fetches its tool list from MCP at boot. Start the MCP server first.
-
----
-
-## A2A
-
-### The agent isn't published — no error, nothing there
-
-**Check for `agent.json`.** `adk api_server --a2a` only publishes folders that
-contain a file named exactly that. Wrong name, wrong directory, or missing
-entirely → the server starts cleanly and publishes nothing.
-
-```bash
-ls src/helpdesk/a2a/remote/billing_agent/agent.json
-```
-
-### 404 fetching the agent card
-
-Path differs by `a2a-sdk` version:
-
-- 1.x → `/.well-known/agent-card.json`
-- 0.3.x → `/.well-known/agent.json`
-
-In code, always use `AGENT_CARD_WELL_KNOWN_PATH` instead of hardcoding.
-
-### Card fetches fine but calls fail
-
-The `url` field in the card is absolute. If the card says `localhost:8001` and
-you're calling from somewhere that can't reach that address, discovery works
-and invocation doesn't.
-
-In this workshop: keep everything inside the Codespace. In production: make the
-URL configurable per environment.
-
-### `triage_agent` doesn't appear in `adk web`
-
-- Missing `__init__.py` with `from . import agent`
-- The module-level variable isn't named exactly `root_agent`
-- You pointed `adk web` at the wrong directory (it should be
-  `src/helpdesk/a2a/local`)
-
-### Triage answers billing questions itself instead of delegating
-
-The model didn't think it needed to. Sharpen the `description` on the
-`RemoteA2aAgent` and the routing rules in triage's `instruction`. This is a
-prompt problem, not a protocol problem — and it's a genuinely useful thing to
-demonstrate live.
-
----
-
-## Ports
 
 ### `Address already in use`
 
-Something from an earlier run is still up.
+Something is already on that port:
 
 ```bash
-lsof -ti:8000 | xargs -r kill    # or 8001 / 8002 / 8003
+lsof -ti:8000 | xargs kill -9
 ```
 
-Port map: MCP `8000`, A2A `8001`, dev UI `8002`, interop `8003`.
+### The notebook hangs on a cell
+
+Restart the kernel (**Kernel → Restart**), confirm the server is still running,
+and re-run from the top of the section.
 
 ---
 
-## Environment
+## Lab 2 — A2A
 
-### `uv: command not found`
+### The agent card returns 404
 
-Outside the devcontainer:
+Two possible causes.
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+**1. Missing or misnamed file.** Each agent folder needs a file named exactly
+`agent.json`, in the folder itself:
+
+```
+src/helpdesk/a2a/remote/billing_agent/
+    agent.json      <- must be exactly this name, exactly here
+    agent.py
+    __init__.py
 ```
 
-### Dependency resolution fails
+If it is missing or named `agent-card.json`, the server starts normally,
+reports nothing, and publishes no agents.
+
+**2. Different path in your SDK version.**
 
 ```bash
-rm -rf .venv && uv sync
+curl -s http://localhost:8001/a2a/billing_agent/.well-known/agent-card.json   # a2a-sdk 1.x
+curl -s http://localhost:8001/a2a/billing_agent/.well-known/agent.json        # a2a-sdk 0.3.x
 ```
 
-`fastmcp==3.4.7` and `google-adk==2.6.3` are pinned deliberately — they request
-compatible `mcp` ranges, which is what lets them share one environment. Bumping
-`fastmcp` to 4.x will break that; see [04 — Stateless MCP](04-stateless-mcp.md).
+### Triage never delegates to billing
 
-### Notebook can't find the kernel
+- Is the billing server actually running on 8001?
+- Is the question clearly about billing? Try *"Why was I charged twice this
+  month?"*
+- Check `BILLING_CARD_URL` in
+  `src/helpdesk/a2a/local/triage_agent/agent.py`.
+- Weak `description` text on the remote agent. The model reads it to decide —
+  vague text means no delegation.
 
-Select the workspace interpreter: `.venv/bin/python`.
+### `adk web` shows no agents
+
+Run it from the repository root. It looks for agent folders relative to the
+current directory. `./scripts/run_web.sh` handles this for you.
 
 ---
 
-## Still stuck
+## Lab 3 — Interop (⭐ optional bonus lab)
 
-Version drift is the usual culprit for anything not listed here. Compare:
+### The agent fails to start
+
+It fetches its tools from MCP at startup, so the MCP server must already be
+running:
 
 ```bash
-uv run python -c "import importlib.metadata as m; print(m.version('fastmcp'), m.version('google-adk'))"
+./scripts/run_mcp_server.sh
 ```
 
-Expected: `3.4.7 2.6.3`.
+### It starts but has no tools
+
+Check `MCP_URL` in `src/helpdesk/interop/support_agent/agent.py` ends in
+`/mcp/`, and that the names in `tool_filter` match the tools the server
+actually offers.
+
+---
+
+## Codespaces
+
+### A port is not forwarded
+
+Open the **Ports** panel and confirm 8000–8003 are listed. Add any missing one
+manually.
+
+### A URL works in the terminal but not the browser
+
+Use the forwarded URL from the **Ports** panel, not `localhost`. Agent cards
+contain absolute URLs, so a mismatch shows up as discovery succeeding and calls
+failing.
+
+---
+
+## Still stuck?
+
+1. Run `uv run python scripts/preflight.py` and read every line.
+2. Restart the affected server. Most failures are a stale process.
+3. Confirm your `.env` values are filled in, and that `env | grep AZURE_`
+   returns nothing unexpected.
+4. Rebuild the Codespace — it is a clean slate and takes a couple of minutes.

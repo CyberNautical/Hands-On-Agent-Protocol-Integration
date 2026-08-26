@@ -1,158 +1,122 @@
 # 04 — Stateless MCP
 
-Read this after Section 1. It is the deployment conversation you will actually
-have with a customer, so it's worth more than it looks.
+**Read this if:** you want MCP to run on more than one server.
+
+This is the single most practical thing to know about deploying MCP, and it is
+the question customers ask first.
 
 ---
 
-## The problem sessions create
+## What "stateful" means
 
-MCP originally worked like this:
+Originally, every MCP conversation worked like this:
 
-1. Client POSTs `initialize`.
-2. Server replies with an `Mcp-Session-Id` header.
-3. Client sends that header on every subsequent request.
-4. Server keeps per-session state in memory.
+1. The client says hello.
+2. The server replies with a **session id** — a string identifying this
+   conversation.
+3. Every later request must carry that id in the `Mcp-Session-Id` header.
+4. The server keeps that session **in its own memory**.
 
-Fine on a laptop. Now put it behind a load balancer:
+Fine on one machine. Now put three copies behind a load balancer:
 
-```mermaid
-graph TD
-    C[Client] --> LB[Load balancer]
-    LB --> S1["Server A<br/>has the session"]
-    LB --> S2["Server B<br/>knows nothing"]
-    LB --> S3["Server C<br/>knows nothing"]
+```
+Client  ->  Load balancer  ->  Server A   (has your session)
+                              Server B   (never heard of you)
+                              Server C   (never heard of you)
 ```
 
-Two out of three requests fail. The session lives in one process's memory.
+Request 1 lands on A and gets a session. Request 2 lands on B, which has no
+idea who you are, and fails.
 
-### Why sticky sessions don't save you
+The usual workaround is **sticky sessions** — configuring the load balancer to
+always send the same client to the same server. It works, but it costs you:
 
-The instinct is "turn on session affinity." It usually doesn't work here.
-
-Many MCP clients — including several popular IDE integrations — issue requests
-with a plain `fetch()` and never store or return cookies. The load balancer has
-nothing to pin on. You can sometimes hash on the `Mcp-Session-Id` header
-instead, but that needs L7 config the customer may not control, and it still
-leaves you with stateful instances: no clean autoscale-down, no serverless,
-and a redeploy drops every conversation in flight.
+- restart a server and every session on it is gone
+- traffic bunches up unevenly
+- you cannot scale down without dropping conversations
+- serverless platforms often cannot do it at all
 
 ---
 
-## What we run
+## The fix
 
-`src/helpdesk/mcp_server/server.py`:
+MCP now allows **stateless HTTP**: the server remembers nothing between
+requests. Each request carries everything it needs.
+
+```
+Client  ->  Load balancer  ->  Server A  }
+                              Server B  }  any of them can answer
+                              Server C  }
+```
+
+Now scaling is boring, which is exactly what you want.
+
+---
+
+## How to turn it on
+
+One argument, in `src/helpdesk/mcp_server/server.py`:
 
 ```python
-mcp.run(transport="http", host="127.0.0.1", port=8000, stateless_http=True)
+mcp = FastMCP("helpdesk", stateless_http=True)
 ```
 
-That's the whole change.
+That is the entire change.
 
-Each request gets a fresh, independent transport. No session is created, no
-session header is returned, and nothing is remembered between requests.
+---
 
-```mermaid
-graph TD
-    C[Client] --> LB[Load balancer]
-    LB --> S1["Server A ✓"]
-    LB --> S2["Server B ✓"]
-    LB --> S3["Server C ✓"]
-```
+## Seeing it work
 
-Any instance can serve any request. Round-robin is enough. Autoscaling works.
-Serverless works. Redeploys don't drop conversations.
-
-You can also set it without touching code:
-
-```bash
-FASTMCP_STATELESS_HTTP=true ./scripts/run_mcp_server.sh
-```
-
-Or, if you're mounting into an existing ASGI app:
+In `notebooks/01_mcp_inspector.ipynb`, **section 5** does this:
 
 ```python
-app = mcp.http_app(stateless_http=True)
+async with streamablehttp_client(MCP_URL) as (read, write, get_session_id):
+    ...
+    print("Mcp-Session-Id returned:", get_session_id() or "<none>")
 ```
 
-The notebook proves it: `Mcp-Session-Id returned: <none>`, and a tool call in a
-completely separate request still works.
+You should see `<none>` — no session was created. The next request in that
+section opens a completely fresh connection and still gets a real answer.
+
+---
+
+## When to use which
+
+| Use **stateless** when | Use **stateful** when |
+|---|---|
+| more than one server copy | one server, one client |
+| serverless or autoscaling | the server needs the conversation so far |
+| a public API | you need server→client notifications |
+| you want simple deployment | you want per-session caching |
+
+**Start stateless.** Add state only when something specific requires it.
 
 ---
 
 ## What you give up
 
-Statelessness is a trade, and you should be able to name the cost.
+Stateless HTTP disables the parts of MCP that depend on a live connection:
 
-Anything that depends on the server remembering a client between requests is
-off the table:
+- **server→client notifications** — the server cannot tell you a tool list changed
+- **sampling** — the server cannot ask the client's model a question mid-call
+- **per-session memory** — no caching between requests
 
-- **Server-initiated messages.** No pushing notifications to a specific client.
-- **Resource subscriptions.** Nothing to notify.
-- **Long-lived per-connection state.** Progress on a long task, cached auth
-  context, an in-flight multi-step interaction.
-
-In practice most MCP servers are request/response tool servers and lose
-nothing. If you genuinely need push, keep sessions and accept the sticky-routing
-architecture — or move that state to a shared store (Redis, a database) and
-stay stateless at the transport.
-
-**The rule of thumb:** default to stateless. Adopt sessions when a specific
-feature forces it, and know which feature it was.
+For a tool server like ours, none of that matters. If you need it, keep state
+outside the process — Redis, a database — rather than in it.
 
 ---
 
-## Where the protocol is heading
+## Answering the customer
 
-What we're running is *transport-level* statelessness: the session machinery
-still exists in the spec, we just don't use it.
+> *"Can we run this in Kubernetes / Lambda / Cloud Run?"*
 
-MCP spec revision **`2026-07-28`** goes further and removes it from the protocol
-itself. The headline changes:
+Yes, if the server is stateless. Set `stateless_http=True`, keep no state in
+process memory, and treat each request as independent. Then it scales like any
+other web service.
 
-- **No `initialize` handshake and no `Mcp-Session-Id`.** Each request carries
-  its own protocol version and client info in `_meta`.
-- **`server/discover`** — one RPC for version and capability selection up front.
-- **`resultType`** on every result: `"complete"` or `"input_required"`.
-- **Multi Round-Trip Requests (MRTR)** replace server-initiated calls. Instead
-  of the server calling back, it returns `input_required` with a list of
-  `inputRequests`, and the client retries including `inputResponses`. Same
-  capability, no persistent connection required.
-- **`Mcp-Method` and `Mcp-Name` HTTP headers**, so gateways can route, meter,
-  and authorize per tool without parsing bodies. This is a big deal for
-  enterprise deployments.
-- **Cacheable list results** (`ttlMs`, `cacheScope`), deterministically ordered.
-- **Deprecated:** Roots, Sampling, Logging, HTTP+SSE transport, OAuth DCR.
-  `ping` and `logging/setLevel` removed.
-
-Two things to take from that list:
-
-1. The direction is unambiguous. Sessions were the thing standing between MCP
-   and ordinary web infrastructure, and they're going.
-2. **Don't build a customer workshop or a production integration on Sampling,
-   Elicitation, or Roots right now.** They're deprecated or era-gated.
-
-### Why this workshop pins stable FastMCP 3.4.7
-
-The 2026-07-28 protocol needs `mcp>=2.0`, which today means a beta FastMCP 4.
-Google ADK pins `mcp<2`. Putting both in one environment forces two virtualenvs
-and a beta dependency into a teaching repo.
-
-The stateless *lesson* — the part a customer will ask you about — is fully
-teachable on stable FastMCP 3.4.7 with `stateless_http=True`, in one
-environment, with everything pinned and reproducible. So that's what we run.
-
-Simple and straightforward before flashy. When ADK moves to `mcp` 2.x, this
-repo moves with it and the lesson doesn't change.
+That answer, delivered confidently, is worth more than most of what is in this
+workshop.
 
 ---
 
-## The 30-second version for a customer
-
-> "MCP used to require sticky sessions, which made it awkward to deploy behind
-> a load balancer. Stateless mode removes that — any instance can serve any
-> request, so it scales like any other HTTP service. The protocol is moving
-> that way permanently. If you need server-push, you'll keep sessions, but
-> most tool servers don't."
-
-That's the whole conversation.
+**Next:** [05 — Going further](05-going-further.md)
